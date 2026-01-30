@@ -864,6 +864,57 @@ export default function JLPTStudyApp() {
   const [audioPhase, setAudioPhase] = useState('word'); // 'word', 'reading', 'meaning', 'sentence'
   const [audioPaused, setAudioPaused] = useState(false);
   const [audioRepeatCount, setAudioRepeatCount] = useState(1); // how many times to repeat each word
+  const [audioCardMode, setAudioCardMode] = useState('all'); // 'all', 'due', 'new', 'shuffle'
+  const [audioCardList, setAudioCardList] = useState([]); // filtered/shuffled card list
+  
+  // Generate card list based on mode
+  const generateAudioCardList = (mode) => {
+    let cards = [];
+    
+    switch(mode) {
+      case 'due':
+        // Cards due for SRS review
+        cards = vocabSRS.filter(card => {
+          const now = new Date();
+          const nextReview = new Date(card.nextReview);
+          return nextReview <= now;
+        });
+        if (cards.length === 0) {
+          // If no due cards, show message and fall back to new cards
+          cards = vocabSRS.filter(c => c.srsLevel === 0).slice(0, 20);
+        }
+        break;
+      case 'new':
+        // Only cards never studied (SRS level 0)
+        cards = vocabSRS.filter(c => c.srsLevel === 0);
+        break;
+      case 'weak':
+        // Cards you struggle with (SRS level 1-2)
+        cards = vocabSRS.filter(c => c.srsLevel >= 1 && c.srsLevel <= 2);
+        if (cards.length === 0) {
+          cards = vocabSRS.filter(c => c.srsLevel === 0).slice(0, 20);
+        }
+        break;
+      case 'shuffle':
+        // All cards in random order
+        cards = [...vocabSRS].sort(() => Math.random() - 0.5);
+        break;
+      case 'all':
+      default:
+        // All cards in sequential order
+        cards = [...vocabSRS];
+        break;
+    }
+    
+    return cards;
+  };
+  
+  // Initialize audio card list when mode changes
+  useEffect(() => {
+    const newList = generateAudioCardList(audioCardMode);
+    setAudioCardList(newList);
+    setAudioCardIndex(0);
+  }, [audioCardMode, vocabSRS]);
   
   // Text-to-Speech function
   const speakJapanese = (text, rate = 0.8) => {
@@ -947,15 +998,15 @@ export default function JLPTStudyApp() {
   // Auto-play next card effect
   useEffect(() => {
     let timer;
-    if (audioAutoMode && !audioIsPlaying && !audioPaused && currentView === 'audioFlashcards') {
+    if (audioAutoMode && !audioIsPlaying && !audioPaused && currentView === 'audioFlashcards' && audioCardList.length > 0) {
       timer = setTimeout(() => {
-        const nextIndex = (audioCardIndex + 1) % vocabSRS.length;
+        const nextIndex = (audioCardIndex + 1) % audioCardList.length;
         setAudioCardIndex(nextIndex);
-        playAudioCard(vocabSRS[nextIndex]);
+        playAudioCard(audioCardList[nextIndex]);
       }, audioInterval * 1000);
     }
     return () => clearTimeout(timer);
-  }, [audioAutoMode, audioIsPlaying, audioPaused, audioCardIndex, currentView]);
+  }, [audioAutoMode, audioIsPlaying, audioPaused, audioCardIndex, currentView, audioCardList]);
   
   // Stop speech
   const stopSpeech = () => {
@@ -1682,6 +1733,8 @@ export default function JLPTStudyApp() {
           setAudioCardIndex(0);
           setAudioAutoMode(false);
           setAudioPaused(false);
+          setAudioCardMode('all');
+          setAudioCardList([...vocabSRS]);
           setCurrentView('audioFlashcards');
         }}
       >
@@ -2907,7 +2960,50 @@ export default function JLPTStudyApp() {
 
   // Render Audio Flashcards View
   const renderAudioFlashcards = () => {
-    const currentCard = vocabSRS[audioCardIndex];
+    const currentCard = audioCardList[audioCardIndex];
+    
+    // Calculate counts for each mode
+    const dueCount = vocabSRS.filter(card => new Date(card.nextReview) <= new Date()).length;
+    const newCount = vocabSRS.filter(c => c.srsLevel === 0).length;
+    const weakCount = vocabSRS.filter(c => c.srsLevel >= 1 && c.srsLevel <= 2).length;
+    
+    if (audioCardList.length === 0) {
+      return (
+        <div>
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px'}}>
+            <button 
+              onClick={() => {
+                stopSpeech();
+                setAudioAutoMode(false);
+                setCurrentView('home');
+              }}
+              style={{background: 'none', border: 'none', color: '#8892b0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'}}
+            >
+              <RotateCcw size={20} />
+              Back
+            </button>
+            <h2 style={{fontSize: '1.2rem', fontWeight: '700'}}>🎧 Audio Flashcards</h2>
+            <div style={{width: '50px'}} />
+          </div>
+          
+          <div style={{textAlign: 'center', paddingTop: '60px'}}>
+            <div style={{fontSize: '4rem', marginBottom: '16px'}}>🎉</div>
+            <h3 style={{fontSize: '1.3rem', fontWeight: '600', marginBottom: '8px'}}>No cards in this mode!</h3>
+            <p style={{color: '#8892b0', marginBottom: '24px'}}>
+              {audioCardMode === 'due' && "No cards due for review right now."}
+              {audioCardMode === 'new' && "You've seen all cards at least once!"}
+              {audioCardMode === 'weak' && "No weak cards - you're doing great!"}
+            </p>
+            <button 
+              onClick={() => setAudioCardMode('all')}
+              style={styles.button}
+            >
+              Switch to All Cards
+            </button>
+          </div>
+        </div>
+      );
+    }
     
     return (
       <div>
@@ -2928,12 +3024,100 @@ export default function JLPTStudyApp() {
           <div style={{width: '50px'}} />
         </div>
 
+        {/* Card Mode Selector */}
+        <div style={{marginBottom: '16px'}}>
+          <div style={{fontSize: '0.8rem', color: '#8892b0', marginBottom: '8px'}}>Card Selection</div>
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px'}}>
+            <button
+              onClick={() => setAudioCardMode('all')}
+              style={{
+                padding: '10px 4px',
+                borderRadius: '8px',
+                border: 'none',
+                background: audioCardMode === 'all' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
+            >
+              All<br/><span style={{fontSize: '0.65rem', opacity: 0.8}}>{vocabSRS.length}</span>
+            </button>
+            <button
+              onClick={() => setAudioCardMode('due')}
+              style={{
+                padding: '10px 4px',
+                borderRadius: '8px',
+                border: 'none',
+                background: audioCardMode === 'due' ? 'linear-gradient(135deg, #e94560 0%, #ff6b6b 100%)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
+            >
+              Due<br/><span style={{fontSize: '0.65rem', opacity: 0.8}}>{dueCount}</span>
+            </button>
+            <button
+              onClick={() => setAudioCardMode('new')}
+              style={{
+                padding: '10px 4px',
+                borderRadius: '8px',
+                border: 'none',
+                background: audioCardMode === 'new' ? 'linear-gradient(135deg, #00ff88 0%, #00d4aa 100%)' : 'rgba(255,255,255,0.1)',
+                color: audioCardMode === 'new' ? '#1a1a2e' : 'white',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
+            >
+              New<br/><span style={{fontSize: '0.65rem', opacity: 0.8}}>{newCount}</span>
+            </button>
+            <button
+              onClick={() => setAudioCardMode('weak')}
+              style={{
+                padding: '10px 4px',
+                borderRadius: '8px',
+                border: 'none',
+                background: audioCardMode === 'weak' ? 'linear-gradient(135deg, #feca57 0%, #ff9f43 100%)' : 'rgba(255,255,255,0.1)',
+                color: audioCardMode === 'weak' ? '#1a1a2e' : 'white',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
+            >
+              Weak<br/><span style={{fontSize: '0.65rem', opacity: 0.8}}>{weakCount}</span>
+            </button>
+            <button
+              onClick={() => setAudioCardMode('shuffle')}
+              style={{
+                padding: '10px 4px',
+                borderRadius: '8px',
+                border: 'none',
+                background: audioCardMode === 'shuffle' ? 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
+            >
+              Shuffle<br/><span style={{fontSize: '0.65rem', opacity: 0.8}}>🎲</span>
+            </button>
+          </div>
+        </div>
+
         {/* Progress */}
         <div style={styles.progressBar}>
-          <div style={{...styles.progressFill, width: `${((audioCardIndex + 1) / vocabSRS.length) * 100}%`}} />
+          <div style={{...styles.progressFill, width: `${((audioCardIndex + 1) / audioCardList.length) * 100}%`}} />
         </div>
         <div style={{textAlign: 'center', fontSize: '0.85rem', color: '#8892b0', marginBottom: '20px'}}>
-          {audioCardIndex + 1} / {vocabSRS.length}
+          {audioCardIndex + 1} / {audioCardList.length} 
+          <span style={{marginLeft: '8px', fontSize: '0.75rem'}}>
+            ({audioCardMode === 'all' ? 'All Cards' : 
+              audioCardMode === 'due' ? 'Due for Review' : 
+              audioCardMode === 'new' ? 'New Cards' : 
+              audioCardMode === 'weak' ? 'Weak Cards' : 'Shuffled'})
+          </span>
         </div>
 
         {/* Mode Toggle */}
@@ -3078,12 +3262,33 @@ export default function JLPTStudyApp() {
             : 'rgba(255, 255, 255, 0.05)',
           border: audioIsPlaying ? '2px solid rgba(79, 172, 254, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)'
         }}>
+          {/* SRS Level Badge */}
+          {currentCard && (
+            <div style={{
+              position: 'absolute',
+              top: '12px',
+              left: '12px',
+              background: currentCard.srsLevel === 0 ? '#e94560' : 
+                         currentCard.srsLevel <= 2 ? '#feca57' : 
+                         currentCard.srsLevel <= 4 ? '#4facfe' : '#00ff88',
+              color: currentCard.srsLevel <= 2 || currentCard.srsLevel > 4 ? '#1a1a2e' : 'white',
+              padding: '4px 10px',
+              borderRadius: '8px',
+              fontSize: '0.65rem',
+              fontWeight: '600'
+            }}>
+              {currentCard.srsLevel === 0 ? 'New' : 
+               currentCard.srsLevel <= 2 ? 'Learning' : 
+               currentCard.srsLevel <= 4 ? 'Review' : 'Mastered'}
+            </div>
+          )}
+          
           {/* Phase Indicator */}
           {audioIsPlaying && (
             <div style={{
               position: 'absolute',
               top: '12px',
-              left: '12px',
+              right: '12px',
               background: 'rgba(79, 172, 254, 0.3)',
               color: '#4facfe',
               padding: '4px 10px',
@@ -3096,28 +3301,6 @@ export default function JLPTStudyApp() {
                audioPhase === 'meaning' ? '🇬🇧 Meaning' : '💬 Sentence'}
             </div>
           )}
-          
-          {/* Playing Indicator */}
-          {audioIsPlaying && (
-            <div style={{
-              position: 'absolute',
-              top: '12px',
-              right: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              color: '#00ff88'
-            }}>
-              <div style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: '#00ff88',
-                animation: 'pulse 1s infinite'
-              }} />
-              <span style={{fontSize: '0.7rem', fontWeight: '600'}}>Playing</span>
-            </div>
-          )}
 
           {audioShowText ? (
             <>
@@ -3126,6 +3309,7 @@ export default function JLPTStudyApp() {
                 fontSize: '3rem',
                 fontWeight: '700',
                 marginBottom: '12px',
+                marginTop: '24px',
                 color: audioPhase === 'word' && audioIsPlaying ? '#4facfe' : 'white'
               }}>
                 {currentCard?.japanese}
@@ -3181,7 +3365,7 @@ export default function JLPTStudyApp() {
                 {audioIsPlaying ? 'Listening...' : 'Text hidden - Listen only mode'}
               </div>
               <div style={{color: '#4facfe', fontSize: '0.85rem', marginTop: '8px'}}>
-                Card {audioCardIndex + 1} of {vocabSRS.length}
+                Card {audioCardIndex + 1} of {audioCardList.length}
               </div>
             </div>
           )}
@@ -3193,10 +3377,10 @@ export default function JLPTStudyApp() {
           <button
             onClick={() => {
               stopSpeech();
-              const prevIndex = audioCardIndex === 0 ? vocabSRS.length - 1 : audioCardIndex - 1;
+              const prevIndex = audioCardIndex === 0 ? audioCardList.length - 1 : audioCardIndex - 1;
               setAudioCardIndex(prevIndex);
               if (!audioAutoMode) {
-                playAudioCard(vocabSRS[prevIndex]);
+                playAudioCard(audioCardList[prevIndex]);
               }
             }}
             style={{
@@ -3255,10 +3439,10 @@ export default function JLPTStudyApp() {
           <button
             onClick={() => {
               stopSpeech();
-              const nextIndex = (audioCardIndex + 1) % vocabSRS.length;
+              const nextIndex = (audioCardIndex + 1) % audioCardList.length;
               setAudioCardIndex(nextIndex);
               if (!audioAutoMode) {
-                playAudioCard(vocabSRS[nextIndex]);
+                playAudioCard(audioCardList[nextIndex]);
               }
             }}
             style={{
@@ -3272,21 +3456,24 @@ export default function JLPTStudyApp() {
           </button>
         </div>
 
-        {/* Shuffle Button */}
-        <button
-          onClick={() => {
-            stopSpeech();
-            const randomIndex = Math.floor(Math.random() * vocabSRS.length);
-            setAudioCardIndex(randomIndex);
-          }}
-          style={{
-            ...styles.button,
-            ...styles.buttonSecondary,
-            marginTop: '12px'
-          }}
-        >
-          🎲 Random Card
-        </button>
+        {/* Reshuffle Button (for shuffle mode) */}
+        {audioCardMode === 'shuffle' && (
+          <button
+            onClick={() => {
+              stopSpeech();
+              const shuffled = [...vocabSRS].sort(() => Math.random() - 0.5);
+              setAudioCardList(shuffled);
+              setAudioCardIndex(0);
+            }}
+            style={{
+              ...styles.button,
+              ...styles.buttonSecondary,
+              marginTop: '12px'
+            }}
+          >
+            🎲 Reshuffle Cards
+          </button>
+        )}
 
         {/* Usage Tips */}
         <div style={{
@@ -3297,12 +3484,14 @@ export default function JLPTStudyApp() {
           border: '1px solid rgba(254, 202, 87, 0.3)'
         }}>
           <div style={{fontSize: '0.85rem', color: '#feca57', fontWeight: '600', marginBottom: '8px'}}>
-            💡 Tips
+            💡 Card Modes
           </div>
           <div style={{fontSize: '0.8rem', color: '#8892b0', lineHeight: '1.6'}}>
-            • <strong>Auto mode</strong>: Cards play automatically - perfect for commute or chores<br/>
-            • <strong>Hide text</strong>: Challenge yourself to understand by listening only<br/>
-            • <strong>Repeat</strong>: Set 2-3x to hear each word multiple times
+            • <strong>All</strong>: Go through all {vocabSRS.length} N4 vocabulary words<br/>
+            • <strong>Due</strong>: Only cards due for SRS review<br/>
+            • <strong>New</strong>: Words you haven't studied yet<br/>
+            • <strong>Weak</strong>: Cards you're still learning<br/>
+            • <strong>Shuffle</strong>: Random order for variety
           </div>
         </div>
 
