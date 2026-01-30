@@ -854,18 +854,108 @@ export default function JLPTStudyApp() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [listeningScore, setListeningScore] = useState({ correct: 0, total: 0 });
   
+  // Audio Flashcard State
+  const [audioCardIndex, setAudioCardIndex] = useState(0);
+  const [audioAutoMode, setAudioAutoMode] = useState(false);
+  const [audioInterval, setAudioInterval] = useState(5); // seconds between cards
+  const [audioSpeed, setAudioSpeed] = useState(0.8); // speech rate
+  const [audioShowText, setAudioShowText] = useState(true);
+  const [audioIsPlaying, setAudioIsPlaying] = useState(false);
+  const [audioPhase, setAudioPhase] = useState('word'); // 'word', 'reading', 'meaning', 'sentence'
+  const [audioPaused, setAudioPaused] = useState(false);
+  const [audioRepeatCount, setAudioRepeatCount] = useState(1); // how many times to repeat each word
+  
   // Text-to-Speech function
-  const speakJapanese = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'ja-JP';
-      utterance.rate = 0.8; // Slower for learners
-      utterance.onstart = () => setIsPlaying(true);
-      utterance.onend = () => setIsPlaying(false);
-      window.speechSynthesis.speak(utterance);
-    }
+  const speakJapanese = (text, rate = 0.8) => {
+    return new Promise((resolve) => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ja-JP';
+        utterance.rate = rate;
+        utterance.onstart = () => setIsPlaying(true);
+        utterance.onend = () => {
+          setIsPlaying(false);
+          resolve();
+        };
+        utterance.onerror = () => {
+          setIsPlaying(false);
+          resolve();
+        };
+        window.speechSynthesis.speak(utterance);
+      } else {
+        resolve();
+      }
+    });
   };
+  
+  // Speak English (for meanings)
+  const speakEnglish = (text, rate = 0.9) => {
+    return new Promise((resolve) => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        utterance.rate = rate;
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+        window.speechSynthesis.speak(utterance);
+      } else {
+        resolve();
+      }
+    });
+  };
+  
+  // Play full audio flashcard sequence
+  const playAudioCard = async (card, speed = audioSpeed) => {
+    if (!card) return;
+    
+    setAudioIsPlaying(true);
+    
+    // Phase 1: Word (Japanese)
+    setAudioPhase('word');
+    for (let i = 0; i < audioRepeatCount; i++) {
+      await speakJapanese(card.japanese, speed);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    
+    // Phase 2: Reading (if different from word)
+    if (card.reading && card.reading !== card.japanese) {
+      setAudioPhase('reading');
+      await new Promise(r => setTimeout(r, 500));
+      await speakJapanese(card.reading, speed);
+    }
+    
+    // Phase 3: English meaning
+    setAudioPhase('meaning');
+    await new Promise(r => setTimeout(r, 500));
+    await speakEnglish(card.meaning, 0.9);
+    
+    // Phase 4: Example sentence
+    if (card.example) {
+      setAudioPhase('sentence');
+      await new Promise(r => setTimeout(r, 700));
+      await speakJapanese(card.example, speed);
+      await new Promise(r => setTimeout(r, 300));
+      await speakEnglish(card.exampleMeaning, 0.9);
+    }
+    
+    setAudioIsPlaying(false);
+    setAudioPhase('word');
+  };
+  
+  // Auto-play next card effect
+  useEffect(() => {
+    let timer;
+    if (audioAutoMode && !audioIsPlaying && !audioPaused && currentView === 'audioFlashcards') {
+      timer = setTimeout(() => {
+        const nextIndex = (audioCardIndex + 1) % vocabSRS.length;
+        setAudioCardIndex(nextIndex);
+        playAudioCard(vocabSRS[nextIndex]);
+      }, audioInterval * 1000);
+    }
+    return () => clearTimeout(timer);
+  }, [audioAutoMode, audioIsPlaying, audioPaused, audioCardIndex, currentView]);
   
   // Stop speech
   const stopSpeech = () => {
@@ -1582,6 +1672,25 @@ export default function JLPTStudyApp() {
         <div style={{flex: 1}}>
           <div style={{fontWeight: '600', marginBottom: '4px'}}>Listening Practice</div>
           <div style={{fontSize: '0.85rem', color: '#8892b0'}}>Dialogues & dictation with audio</div>
+        </div>
+        <ChevronRight size={20} color="#8892b0" />
+      </div>
+
+      <div 
+        style={styles.menuItem}
+        onClick={() => {
+          setAudioCardIndex(0);
+          setAudioAutoMode(false);
+          setAudioPaused(false);
+          setCurrentView('audioFlashcards');
+        }}
+      >
+        <div style={{...styles.iconBox, background: 'linear-gradient(135deg, #667eea, #764ba2)'}}>
+          <Volume2 size={24} color="white" />
+        </div>
+        <div style={{flex: 1}}>
+          <div style={{fontWeight: '600', marginBottom: '4px'}}>Audio Flashcards</div>
+          <div style={{fontSize: '0.85rem', color: '#8892b0'}}>Listen & learn hands-free with auto-play</div>
         </div>
         <ChevronRight size={20} color="#8892b0" />
       </div>
@@ -2796,6 +2905,412 @@ export default function JLPTStudyApp() {
     );
   };
 
+  // Render Audio Flashcards View
+  const renderAudioFlashcards = () => {
+    const currentCard = vocabSRS[audioCardIndex];
+    
+    return (
+      <div>
+        {/* Header */}
+        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px'}}>
+          <button 
+            onClick={() => {
+              stopSpeech();
+              setAudioAutoMode(false);
+              setCurrentView('home');
+            }}
+            style={{background: 'none', border: 'none', color: '#8892b0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'}}
+          >
+            <RotateCcw size={20} />
+            Back
+          </button>
+          <h2 style={{fontSize: '1.2rem', fontWeight: '700'}}>🎧 Audio Flashcards</h2>
+          <div style={{width: '50px'}} />
+        </div>
+
+        {/* Progress */}
+        <div style={styles.progressBar}>
+          <div style={{...styles.progressFill, width: `${((audioCardIndex + 1) / vocabSRS.length) * 100}%`}} />
+        </div>
+        <div style={{textAlign: 'center', fontSize: '0.85rem', color: '#8892b0', marginBottom: '20px'}}>
+          {audioCardIndex + 1} / {vocabSRS.length}
+        </div>
+
+        {/* Mode Toggle */}
+        <div style={{display: 'flex', gap: '8px', marginBottom: '20px'}}>
+          <button
+            onClick={() => {
+              setAudioAutoMode(false);
+              setAudioPaused(false);
+            }}
+            style={{
+              flex: 1,
+              padding: '12px',
+              borderRadius: '12px',
+              border: 'none',
+              background: !audioAutoMode ? 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' : 'rgba(255,255,255,0.1)',
+              color: 'white',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
+            ✋ Manual
+          </button>
+          <button
+            onClick={() => {
+              setAudioAutoMode(true);
+              setAudioPaused(false);
+              if (!audioIsPlaying) {
+                playAudioCard(currentCard);
+              }
+            }}
+            style={{
+              flex: 1,
+              padding: '12px',
+              borderRadius: '12px',
+              border: 'none',
+              background: audioAutoMode ? 'linear-gradient(135deg, #00ff88 0%, #00d4aa 100%)' : 'rgba(255,255,255,0.1)',
+              color: audioAutoMode ? '#1a1a2e' : 'white',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
+            🔄 Auto Play
+          </button>
+        </div>
+
+        {/* Settings */}
+        <div style={{...styles.card, padding: '16px', marginBottom: '20px', background: 'rgba(255,255,255,0.05)'}}>
+          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px'}}>
+            {/* Speed Control */}
+            <div>
+              <div style={{fontSize: '0.8rem', color: '#8892b0', marginBottom: '8px'}}>Speed</div>
+              <div style={{display: 'flex', gap: '4px'}}>
+                {[0.6, 0.8, 1.0].map(speed => (
+                  <button
+                    key={speed}
+                    onClick={() => setAudioSpeed(speed)}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: audioSpeed === speed ? '#4facfe' : 'rgba(255,255,255,0.1)',
+                      color: 'white',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {speed === 0.6 ? 'Slow' : speed === 0.8 ? 'Normal' : 'Fast'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Interval Control (Auto mode) */}
+            <div>
+              <div style={{fontSize: '0.8rem', color: '#8892b0', marginBottom: '8px'}}>Auto Interval</div>
+              <div style={{display: 'flex', gap: '4px'}}>
+                {[3, 5, 8].map(sec => (
+                  <button
+                    key={sec}
+                    onClick={() => setAudioInterval(sec)}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: audioInterval === sec ? '#00ff88' : 'rgba(255,255,255,0.1)',
+                      color: audioInterval === sec ? '#1a1a2e' : 'white',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {sec}s
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* Additional Options */}
+          <div style={{display: 'flex', gap: '16px', marginTop: '16px'}}>
+            <button
+              onClick={() => setAudioShowText(!audioShowText)}
+              style={{
+                flex: 1,
+                padding: '10px',
+                borderRadius: '8px',
+                border: `1px solid ${audioShowText ? '#4facfe' : 'rgba(255,255,255,0.2)'}`,
+                background: audioShowText ? 'rgba(79, 172, 254, 0.2)' : 'transparent',
+                color: 'white',
+                fontSize: '0.8rem',
+                cursor: 'pointer'
+              }}
+            >
+              {audioShowText ? '👁️ Text Visible' : '👁️‍🗨️ Text Hidden'}
+            </button>
+            <button
+              onClick={() => setAudioRepeatCount(audioRepeatCount === 1 ? 2 : audioRepeatCount === 2 ? 3 : 1)}
+              style={{
+                flex: 1,
+                padding: '10px',
+                borderRadius: '8px',
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'transparent',
+                color: 'white',
+                fontSize: '0.8rem',
+                cursor: 'pointer'
+              }}
+            >
+              🔁 Repeat: {audioRepeatCount}x
+            </button>
+          </div>
+        </div>
+
+        {/* Flashcard Display */}
+        <div style={{
+          ...styles.flashcard,
+          minHeight: '280px',
+          position: 'relative',
+          background: audioIsPlaying 
+            ? 'linear-gradient(135deg, rgba(79, 172, 254, 0.2) 0%, rgba(0, 242, 254, 0.1) 100%)'
+            : 'rgba(255, 255, 255, 0.05)',
+          border: audioIsPlaying ? '2px solid rgba(79, 172, 254, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          {/* Phase Indicator */}
+          {audioIsPlaying && (
+            <div style={{
+              position: 'absolute',
+              top: '12px',
+              left: '12px',
+              background: 'rgba(79, 172, 254, 0.3)',
+              color: '#4facfe',
+              padding: '4px 10px',
+              borderRadius: '8px',
+              fontSize: '0.7rem',
+              fontWeight: '600'
+            }}>
+              {audioPhase === 'word' ? '🎯 Word' : 
+               audioPhase === 'reading' ? '📖 Reading' : 
+               audioPhase === 'meaning' ? '🇬🇧 Meaning' : '💬 Sentence'}
+            </div>
+          )}
+          
+          {/* Playing Indicator */}
+          {audioIsPlaying && (
+            <div style={{
+              position: 'absolute',
+              top: '12px',
+              right: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: '#00ff88'
+            }}>
+              <div style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#00ff88',
+                animation: 'pulse 1s infinite'
+              }} />
+              <span style={{fontSize: '0.7rem', fontWeight: '600'}}>Playing</span>
+            </div>
+          )}
+
+          {audioShowText ? (
+            <>
+              {/* Japanese Word */}
+              <div style={{
+                fontSize: '3rem',
+                fontWeight: '700',
+                marginBottom: '12px',
+                color: audioPhase === 'word' && audioIsPlaying ? '#4facfe' : 'white'
+              }}>
+                {currentCard?.japanese}
+              </div>
+              
+              {/* Reading */}
+              <div style={{
+                fontSize: '1.3rem',
+                color: audioPhase === 'reading' && audioIsPlaying ? '#4facfe' : '#e94560',
+                marginBottom: '12px'
+              }}>
+                {currentCard?.reading}
+              </div>
+              
+              {/* Meaning */}
+              <div style={{
+                fontSize: '1.1rem',
+                color: audioPhase === 'meaning' && audioIsPlaying ? '#4facfe' : '#8892b0',
+                marginBottom: '20px'
+              }}>
+                {currentCard?.meaning}
+              </div>
+              
+              {/* Example Sentence */}
+              <div style={{
+                background: audioPhase === 'sentence' && audioIsPlaying 
+                  ? 'rgba(79, 172, 254, 0.15)' 
+                  : 'rgba(0,0,0,0.2)',
+                borderRadius: '12px',
+                padding: '16px',
+                borderLeft: audioPhase === 'sentence' && audioIsPlaying 
+                  ? '3px solid #4facfe' 
+                  : '3px solid #feca57'
+              }}>
+                <div style={{fontSize: '1rem', marginBottom: '6px', lineHeight: '1.5'}}>
+                  {currentCard?.example}
+                </div>
+                <div style={{fontSize: '0.85rem', color: '#8892b0'}}>
+                  {currentCard?.exampleMeaning}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '200px'
+            }}>
+              <Headphones size={64} color="#4facfe" style={{marginBottom: '16px', opacity: audioIsPlaying ? 1 : 0.5}} />
+              <div style={{color: '#8892b0', fontSize: '1rem'}}>
+                {audioIsPlaying ? 'Listening...' : 'Text hidden - Listen only mode'}
+              </div>
+              <div style={{color: '#4facfe', fontSize: '0.85rem', marginTop: '8px'}}>
+                Card {audioCardIndex + 1} of {vocabSRS.length}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Control Buttons */}
+        <div style={{display: 'flex', gap: '12px', marginTop: '20px'}}>
+          {/* Previous */}
+          <button
+            onClick={() => {
+              stopSpeech();
+              const prevIndex = audioCardIndex === 0 ? vocabSRS.length - 1 : audioCardIndex - 1;
+              setAudioCardIndex(prevIndex);
+              if (!audioAutoMode) {
+                playAudioCard(vocabSRS[prevIndex]);
+              }
+            }}
+            style={{
+              ...styles.button,
+              flex: 1,
+              background: 'rgba(255,255,255,0.1)',
+              padding: '16px'
+            }}
+          >
+            ⏮️ Prev
+          </button>
+          
+          {/* Play / Pause */}
+          {audioAutoMode ? (
+            <button
+              onClick={() => {
+                if (audioPaused) {
+                  setAudioPaused(false);
+                  playAudioCard(currentCard);
+                } else {
+                  setAudioPaused(true);
+                  stopSpeech();
+                }
+              }}
+              style={{
+                ...styles.button,
+                flex: 2,
+                background: audioPaused 
+                  ? 'linear-gradient(135deg, #00ff88 0%, #00d4aa 100%)' 
+                  : 'linear-gradient(135deg, #feca57 0%, #ff6b6b 100%)',
+                color: audioPaused ? '#1a1a2e' : 'white',
+                padding: '16px'
+              }}
+            >
+              {audioPaused ? '▶️ Resume' : '⏸️ Pause'}
+            </button>
+          ) : (
+            <button
+              onClick={() => playAudioCard(currentCard)}
+              disabled={audioIsPlaying}
+              style={{
+                ...styles.button,
+                flex: 2,
+                background: audioIsPlaying 
+                  ? 'rgba(79, 172, 254, 0.3)' 
+                  : 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                padding: '16px',
+                opacity: audioIsPlaying ? 0.7 : 1
+              }}
+            >
+              {audioIsPlaying ? '🔊 Playing...' : '🔊 Play'}
+            </button>
+          )}
+          
+          {/* Next */}
+          <button
+            onClick={() => {
+              stopSpeech();
+              const nextIndex = (audioCardIndex + 1) % vocabSRS.length;
+              setAudioCardIndex(nextIndex);
+              if (!audioAutoMode) {
+                playAudioCard(vocabSRS[nextIndex]);
+              }
+            }}
+            style={{
+              ...styles.button,
+              flex: 1,
+              background: 'rgba(255,255,255,0.1)',
+              padding: '16px'
+            }}
+          >
+            Next ⏭️
+          </button>
+        </div>
+
+        {/* Shuffle Button */}
+        <button
+          onClick={() => {
+            stopSpeech();
+            const randomIndex = Math.floor(Math.random() * vocabSRS.length);
+            setAudioCardIndex(randomIndex);
+          }}
+          style={{
+            ...styles.button,
+            ...styles.buttonSecondary,
+            marginTop: '12px'
+          }}
+        >
+          🎲 Random Card
+        </button>
+
+        {/* Usage Tips */}
+        <div style={{
+          ...styles.card,
+          marginTop: '20px',
+          padding: '16px',
+          background: 'rgba(254, 202, 87, 0.1)',
+          border: '1px solid rgba(254, 202, 87, 0.3)'
+        }}>
+          <div style={{fontSize: '0.85rem', color: '#feca57', fontWeight: '600', marginBottom: '8px'}}>
+            💡 Tips
+          </div>
+          <div style={{fontSize: '0.8rem', color: '#8892b0', lineHeight: '1.6'}}>
+            • <strong>Auto mode</strong>: Cards play automatically - perfect for commute or chores<br/>
+            • <strong>Hide text</strong>: Challenge yourself to understand by listening only<br/>
+            • <strong>Repeat</strong>: Set 2-3x to hear each word multiple times
+          </div>
+        </div>
+
+        <div style={{height: '100px'}} />
+      </div>
+    );
+  };
+
   // Render Progress View
   const renderProgress = () => {
     // Calculate mastery stats
@@ -2949,6 +3464,7 @@ export default function JLPTStudyApp() {
         {currentView === 'progress' && renderProgress()}
         {currentView === 'mistakes' && renderMistakes()}
         {currentView === 'listening' && renderListening()}
+        {currentView === 'audioFlashcards' && renderAudioFlashcards()}
       </div>
 
       {/* Bottom Navigation */}
